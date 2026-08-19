@@ -1,0 +1,63 @@
+name: Build SanTechSmetaPro Windows Installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install NSIS
+        shell: powershell
+        run: choco install nsis -y --no-progress
+
+      - name: Unpack project
+        shell: powershell
+        run: |
+          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v1.8_UI_WindowsReady.zip'
+          if (-not (Test-Path $zip)) { throw "Archive not found: $zip" }
+
+          $dst = Join-Path $env:GITHUB_WORKSPACE 'buildsrc'
+
+          if (Test-Path $dst) {
+            Remove-Item $dst -Recurse -Force
+          }
+
+          Expand-Archive -Path $zip -DestinationPath $dst -Force
+
+      - name: Build, test, publish, smoke-test and create installer
+        shell: powershell
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
+          .\scripts\build-installer.ps1
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SanTechSmetaPro-Windows-Installer-v1.8.0
+          path: |
+            buildsrc/artifacts/installer/SanTechSmetaPro-Setup-v1.8.0.exe
+            buildsrc/artifacts/installer/BUILD_REPORT.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload portable Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SanTechSmetaPro-win-x64-portable-v1.8.0
+          path: buildsrc/artifacts/win-x64/**
+          if-no-files-found: error
+          retention-days: 14
