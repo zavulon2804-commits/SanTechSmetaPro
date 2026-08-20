@@ -21,69 +21,151 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Verify selected SDK
-        shell: pwsh
-        run: |
-          dotnet --version
-          dotnet --info
-
       - name: Install NSIS
         shell: pwsh
-        run: choco install nsis -y --no-progress
+        run: |
+          choco install nsis -y --no-progress
 
       - name: Check source archive
         shell: pwsh
         run: |
-          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0.3_CatalogHotfix_WindowsReady.zip'
+          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0.3_CadStartupHotfix_WindowsReady.zip'
+
+          Write-Host "Looking for source archive:"
+          Write-Host $zip
+
           if (-not (Test-Path $zip)) {
-            Get-ChildItem $env:GITHUB_WORKSPACE
+            Write-Host ""
+            Write-Host "Files in repository root:"
+            Get-ChildItem $env:GITHUB_WORKSPACE |
+              Select-Object Name, Length, FullName
+
             throw "Archive not found: $zip"
           }
-          Get-Item $zip | Format-List Name, Length, FullName
+
+          Write-Host ""
+          Write-Host "Source archive found:"
+          Get-Item $zip |
+            Format-List Name, Length, FullName
 
       - name: Unpack project
         shell: pwsh
         run: |
-          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0.3_CatalogHotfix_WindowsReady.zip'
+          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0.3_CadStartupHotfix_WindowsReady.zip'
           $dst = Join-Path $env:GITHUB_WORKSPACE 'buildsrc'
-          if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
-          New-Item -ItemType Directory -Path $dst -Force | Out-Null
-          Expand-Archive -Path $zip -DestinationPath $dst -Force
 
-          if (-not (Test-Path "$dst\global.json")) { throw "global.json not found after unpack." }
-          if (-not (Test-Path "$dst\SanTechSmeta.sln")) { throw "SanTechSmeta.sln not found after unpack." }
-          if (-not (Test-Path "$dst\scripts\build-installer.ps1")) { throw "build-installer.ps1 not found after unpack." }
+          if (Test-Path $dst) {
+            Remove-Item $dst -Recurse -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path $dst `
+            -Force |
+            Out-Null
+
+          Expand-Archive `
+            -Path $zip `
+            -DestinationPath $dst `
+            -Force
+
+          Write-Host ""
+          Write-Host "Project unpacked to:"
+          Write-Host $dst
+
+          if (-not (Test-Path "$dst\global.json")) {
+            throw "global.json not found after unpack."
+          }
+
+          if (-not (Test-Path "$dst\SanTechSmeta.sln")) {
+            throw "SanTechSmeta.sln not found after unpack."
+          }
+
+          if (-not (Test-Path "$dst\scripts\build-installer.ps1")) {
+            throw "build-installer.ps1 not found after unpack."
+          }
+
+          Write-Host "Project structure verified successfully."
 
       - name: Confirm .NET 8 inside project
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
+
           $version = dotnet --version
-          Write-Host "Selected SDK: $version"
+
+          Write-Host "Selected SDK inside project:"
+          Write-Host $version
+
           if (-not $version.StartsWith('8.0.')) {
             throw "Expected .NET 8 SDK, got $version"
           }
 
-      - name: Build, test, publish, smoke-test and create installer
+          dotnet --info
+
+      - name: Build test publish smoke-test and create installer
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
+
           .\scripts\build-installer.ps1
-          if ($LASTEXITCODE -ne 0) { throw "build-installer.ps1 failed." }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "build-installer.ps1 failed."
+          }
 
       - name: Verify installer
         shell: pwsh
         run: |
-          $installer = Join-Path $env:GITHUB_WORKSPACE 'buildsrc\artifacts\installer\SanTechSmetaPro-Setup-v2.0.3.exe'
+          $installer = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            'buildsrc\artifacts\installer\SanTechSmetaPro-Setup-v2.0.3.exe'
+
+          Write-Host ""
+          Write-Host "Looking for installer:"
+          Write-Host $installer
+
           if (-not (Test-Path $installer)) {
-            $dir = Join-Path $env:GITHUB_WORKSPACE 'buildsrc\artifacts\installer'
-            if (Test-Path $dir) { Get-ChildItem $dir -Recurse | Select-Object FullName, Length }
-            throw "Installer was not created."
+            Write-Host ""
+            Write-Host "Installer was not found."
+
+            $artifactRoot = Join-Path `
+              $env:GITHUB_WORKSPACE `
+              'buildsrc\artifacts'
+
+            if (Test-Path $artifactRoot) {
+              Write-Host ""
+              Write-Host "Contents of artifacts folder:"
+
+              Get-ChildItem `
+                $artifactRoot `
+                -Recurse |
+                Select-Object FullName, Length
+            }
+
+            throw "SanTechSmetaPro-Setup-v2.0.3.exe was not created."
           }
+
           $file = Get-Item $installer
-          Write-Host "Installer: $($file.FullName)"
-          Write-Host "Size: $([math]::Round($file.Length / 1MB, 2)) MB"
-          (Get-FileHash -Path $installer -Algorithm SHA256) | Format-List
+
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "INSTALLER CREATED SUCCESSFULLY"
+          Write-Host "========================================"
+          Write-Host "File:"
+          Write-Host $file.FullName
+          Write-Host ""
+          Write-Host "Size:"
+          Write-Host "$([math]::Round($file.Length / 1MB, 2)) MB"
+          Write-Host ""
+
+          $hash = Get-FileHash `
+            -Path $installer `
+            -Algorithm SHA256
+
+          Write-Host "SHA256:"
+          Write-Host $hash.Hash
+          Write-Host "========================================"
 
       - name: Upload Windows Installer
         uses: actions/upload-artifact@v4
@@ -100,6 +182,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SanTechSmetaPro-win-x64-portable-v2.0.3
-          path: buildsrc/artifacts/win-x64/**
+          path: |
+            buildsrc/artifacts/win-x64/**
           if-no-files-found: error
           retention-days: 14
