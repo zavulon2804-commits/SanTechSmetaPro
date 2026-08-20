@@ -1,4 +1,4 @@
-name: Build SanTechSmetaPro Windows Installer v2.0
+name: Build SanTechSmetaPro Windows Installer v2.0.1
 
 on:
   workflow_dispatch:
@@ -25,36 +25,101 @@ jobs:
         shell: pwsh
         run: choco install nsis -y --no-progress
 
+      - name: Check source archive
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0.1_Hotfix_WindowsReady.zip'
+
+          if (-not (Test-Path $zip)) {
+            Write-Host "Files in repository root:"
+            Get-ChildItem $env:GITHUB_WORKSPACE
+            throw "Archive not found: $zip"
+          }
+
+          Write-Host "Source archive found:"
+          Get-Item $zip | Format-List Name, Length, FullName
+
       - name: Unpack project
         shell: pwsh
         run: |
-          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0_VisualWorkflow_WindowsReady.zip'
-          if (-not (Test-Path $zip)) { throw "Archive not found: $zip" }
+          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0.1_Hotfix_WindowsReady.zip'
           $dst = Join-Path $env:GITHUB_WORKSPACE 'buildsrc'
-          if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
-          Expand-Archive -Path $zip -DestinationPath $dst -Force
 
-      - name: Apply MainWindow initialization hotfix
-        shell: pwsh
-        run: |
-          $file = Join-Path $env:GITHUB_WORKSPACE 'buildsrc\src\SanTechSmeta.App\MainWindow.xaml.cs'
-          $text = Get-Content $file -Raw
-          $pattern = '(?s)(public MainWindow\(MainWindowViewModel viewModel, IServiceProvider serviceProvider\)\s*\{\s*)InitializeComponent\(\);\s*_viewModel = viewModel;\s*_serviceProvider = serviceProvider;'
-          $replacement = '$1_viewModel = viewModel;' + "`r`n        " + '_serviceProvider = serviceProvider;' + "`r`n        " + 'InitializeComponent();'
-          $patched = [regex]::Replace($text, $pattern, $replacement, 1)
-          if ($patched -eq $text) { throw 'MainWindow hotfix was not applied.' }
-          [System.IO.File]::WriteAllText($file, $patched, [System.Text.UTF8Encoding]::new($false))
+          if (Test-Path $dst) {
+            Remove-Item $dst -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+
+          Expand-Archive `
+            -Path $zip `
+            -DestinationPath $dst `
+            -Force
+
+          if (-not (Test-Path "$dst\SanTechSmeta.sln")) {
+            throw "SanTechSmeta.sln not found after unpack."
+          }
+
+          if (-not (Test-Path "$dst\scripts\build-installer.ps1")) {
+            throw "build-installer.ps1 not found after unpack."
+          }
+
+          Write-Host "Project unpacked successfully."
 
       - name: Build, test, publish, smoke-test and create installer
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
+
           .\scripts\build-installer.ps1
 
-      - name: Upload installer
+          if ($LASTEXITCODE -ne 0) {
+            throw "build-installer.ps1 failed."
+          }
+
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $installer = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            'buildsrc\artifacts\installer\SanTechSmetaPro-Setup-v2.0.0.exe'
+
+          if (-not (Test-Path $installer)) {
+            Write-Host "Installer directory:"
+
+            $dir = Join-Path `
+              $env:GITHUB_WORKSPACE `
+              'buildsrc\artifacts\installer'
+
+            if (Test-Path $dir) {
+              Get-ChildItem $dir -Recurse |
+                Select-Object FullName, Length
+            }
+
+            throw "Installer was not created."
+          }
+
+          $file = Get-Item $installer
+
+          Write-Host ""
+          Write-Host "=================================="
+          Write-Host "INSTALLER CREATED SUCCESSFULLY"
+          Write-Host "=================================="
+          Write-Host "File: $($file.Name)"
+          Write-Host "Size: $([math]::Round($file.Length / 1MB, 2)) MB"
+
+          $hash = Get-FileHash `
+            -Path $installer `
+            -Algorithm SHA256
+
+          Write-Host "SHA256:"
+          Write-Host $hash.Hash
+          Write-Host "=================================="
+
+      - name: Upload Windows Installer
         uses: actions/upload-artifact@v4
         with:
-          name: SanTechSmetaPro-Windows-Installer-v2.0.0
+          name: SanTechSmetaPro-Windows-Installer-v2.0.1
           path: |
             buildsrc/artifacts/installer/SanTechSmetaPro-Setup-v2.0.0.exe
             buildsrc/artifacts/installer/BUILD_REPORT.txt
@@ -65,7 +130,7 @@ jobs:
       - name: Upload portable Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SanTechSmetaPro-win-x64-portable-v2.0.0
+          name: SanTechSmetaPro-win-x64-portable-v2.0.1
           path: buildsrc/artifacts/win-x64/**
           if-no-files-found: error
           retention-days: 14
