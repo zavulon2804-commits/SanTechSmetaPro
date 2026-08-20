@@ -21,11 +21,11 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Install NSIS
-        shell: powershell
+        shell: pwsh
         run: choco install nsis -y --no-progress
 
       - name: Unpack project
-        shell: powershell
+        shell: pwsh
         run: |
           $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v1.8_UI_WindowsReady.zip'
           if (-not (Test-Path $zip)) { throw "Archive not found: $zip" }
@@ -39,7 +39,7 @@ jobs:
           Expand-Archive -Path $zip -DestinationPath $dst -Force
 
       - name: Build, test, publish, smoke-test and create installer
-        shell: powershell
+        shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
           .\scripts\build-installer.ps1
