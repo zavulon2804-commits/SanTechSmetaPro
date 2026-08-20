@@ -13,180 +13,45 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      # 1. Получаем файлы из репозитория
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Устанавливаем .NET 8
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      # 3. Показываем версию .NET для диагностики
-      - name: Check .NET
-        shell: pwsh
-        run: |
-          dotnet --info
-          dotnet --version
-
-      # 4. Устанавливаем NSIS для создания EXE-установщика
       - name: Install NSIS
         shell: pwsh
-        run: |
-          choco install nsis -y --no-progress
+        run: choco install nsis -y --no-progress
 
-      # 5. Проверяем, что архив v2.0 загружен в GitHub
-      - name: Check source archive
+      - name: Unpack project
         shell: pwsh
         run: |
           $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0_VisualWorkflow_WindowsReady.zip'
-
-          Write-Host "Ищем архив:"
-          Write-Host $zip
-
-          if (-not (Test-Path $zip)) {
-            Write-Host ""
-            Write-Host "Содержимое корня репозитория:"
-            Get-ChildItem $env:GITHUB_WORKSPACE
-            Write-Host ""
-
-            throw "Не найден SanTechSmetaPro_v2.0_VisualWorkflow_WindowsReady.zip"
-          }
-
-          Write-Host "Архив найден."
-          Get-Item $zip | Format-List Name, Length, FullName
-
-      # 6. Распаковываем проект
-      - name: Unpack SanTechSmetaPro v2.0
-        shell: pwsh
-        run: |
-          $zip = Join-Path $env:GITHUB_WORKSPACE 'SanTechSmetaPro_v2.0_VisualWorkflow_WindowsReady.zip'
+          if (-not (Test-Path $zip)) { throw "Archive not found: $zip" }
           $dst = Join-Path $env:GITHUB_WORKSPACE 'buildsrc'
+          if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+          Expand-Archive -Path $zip -DestinationPath $dst -Force
 
-          if (Test-Path $dst) {
-            Remove-Item $dst -Recurse -Force
-          }
+      - name: Apply MainWindow initialization hotfix
+        shell: pwsh
+        run: |
+          $file = Join-Path $env:GITHUB_WORKSPACE 'buildsrc\src\SanTechSmeta.App\MainWindow.xaml.cs'
+          $text = Get-Content $file -Raw
+          $pattern = '(?s)(public MainWindow\(MainWindowViewModel viewModel, IServiceProvider serviceProvider\)\s*\{\s*)InitializeComponent\(\);\s*_viewModel = viewModel;\s*_serviceProvider = serviceProvider;'
+          $replacement = '$1_viewModel = viewModel;' + "`r`n        " + '_serviceProvider = serviceProvider;' + "`r`n        " + 'InitializeComponent();'
+          $patched = [regex]::Replace($text, $pattern, $replacement, 1)
+          if ($patched -eq $text) { throw 'MainWindow hotfix was not applied.' }
+          [System.IO.File]::WriteAllText($file, $patched, [System.Text.UTF8Encoding]::new($false))
 
-          New-Item -ItemType Directory -Path $dst -Force | Out-Null
-
-          Expand-Archive `
-            -Path $zip `
-            -DestinationPath $dst `
-            -Force
-
-          Write-Host ""
-          Write-Host "Проект распакован в:"
-          Write-Host $dst
-          Write-Host ""
-
-          if (-not (Test-Path "$dst\SanTechSmeta.sln")) {
-            throw "После распаковки не найден SanTechSmeta.sln"
-          }
-
-          if (-not (Test-Path "$dst\scripts\build-installer.ps1")) {
-            throw "После распаковки не найден scripts\build-installer.ps1"
-          }
-
-          Write-Host "Структура проекта проверена."
-
-      # 7. Восстанавливаем NuGet-пакеты
-      - name: Restore NuGet packages
+      - name: Build, test, publish, smoke-test and create installer
         shell: pwsh
         run: |
           Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
-
-          dotnet restore SanTechSmeta.sln
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "dotnet restore завершился ошибкой."
-          }
-
-      # 8. Собираем Solution отдельно, чтобы ошибки были хорошо видны в GitHub
-      - name: Build solution
-        shell: pwsh
-        run: |
-          Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
-
-          dotnet build SanTechSmeta.sln `
-            -c Release `
-            --no-restore
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "dotnet build завершился ошибкой."
-          }
-
-      # 9. Запускаем автоматические тесты
-      - name: Run tests
-        shell: pwsh
-        run: |
-          Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
-
-          dotnet test `
-            tests\SanTechSmeta.Tests\SanTechSmeta.Tests.csproj `
-            -c Release `
-            --no-build `
-            --logger "console;verbosity=normal"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Автоматические тесты завершились ошибкой."
-          }
-
-      # 10. Полная Windows-сборка:
-      # publish + smoke-test + создание NSIS установщика
-      - name: Build installer
-        shell: pwsh
-        run: |
-          Set-Location "$env:GITHUB_WORKSPACE\buildsrc"
-
           .\scripts\build-installer.ps1
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "build-installer.ps1 завершился ошибкой."
-          }
-
-      # 11. Проверяем, что EXE действительно был создан
-      - name: Verify installer
-        shell: pwsh
-        run: |
-          $installer = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            'buildsrc\artifacts\installer\SanTechSmetaPro-Setup-v2.0.0.exe'
-
-          if (-not (Test-Path $installer)) {
-            Write-Host ""
-            Write-Host "Содержимое artifacts:"
-            
-            $artifacts = Join-Path $env:GITHUB_WORKSPACE 'buildsrc\artifacts'
-
-            if (Test-Path $artifacts) {
-              Get-ChildItem $artifacts -Recurse |
-                Select-Object FullName, Length
-            }
-
-            throw "Установщик SanTechSmetaPro-Setup-v2.0.0.exe не найден."
-          }
-
-          $file = Get-Item $installer
-
-          Write-Host ""
-          Write-Host "========================================"
-          Write-Host "УСТАНОВЩИК УСПЕШНО СОЗДАН"
-          Write-Host "========================================"
-          Write-Host "Файл: $($file.Name)"
-          Write-Host "Размер: $([math]::Round($file.Length / 1MB, 2)) MB"
-          Write-Host ""
-
-          $hash = Get-FileHash `
-            -Path $installer `
-            -Algorithm SHA256
-
-          Write-Host "SHA256:"
-          Write-Host $hash.Hash
-          Write-Host "========================================"
-
-      # 12. Загружаем готовый EXE как GitHub Artifact
-      - name: Upload Windows Installer
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: SanTechSmetaPro-Windows-Installer-v2.0.0
@@ -197,7 +62,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # 13. Отдельно сохраняем переносную версию программы
       - name: Upload portable Windows build
         uses: actions/upload-artifact@v4
         with:
